@@ -1,0 +1,30 @@
+# Stock Trading System Dependencies
+# Core packages for Kiwoom API integration and data collection
+
+# Kiwoom OpenAPI integration
+PyQt5==5.15.10
+
+# Database ORM and drivers
+SQLAlchemy==2.0.23
+psycopg2-binary>=2.9.0
+
+# Configuration and logging
+python-dotenv>=1.0.0
+PyYAML>=6.0.0
+
+# Date and time utilities
+python-dateutil>=2.8.0
+
+# Data analysis libraries
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Korean stock data (install separately if needed)
+# FinanceDataReader  # Install manually: pip install FinanceDataReader
+# pykrx              # Install manually: pip install pykrx
+
+# Networking and requests
+requests>=2.31.0
+
+# Development and testing
+pytest>=7.4.0

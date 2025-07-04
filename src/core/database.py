@@ -37,19 +37,27 @@ class Stock(Base):
     def __repr__(self):
         return f"<Stock(code='{self.code}', name='{self.name}', market='{self.market}')>"
 
+
 class DailyPrice(Base):
-    """일봉 데이터 모델 (기존 opt10081 일봉차트조회 데이터)"""
+    """일봉 데이터 모델 (키움 API 호환)"""
     __tablename__ = 'daily_prices'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     stock_code = Column(VARCHAR(10), nullable=False, comment='종목코드')
     date = Column(VARCHAR(8), nullable=False, comment='일자(YYYYMMDD)')
-    open_price = Column(Integer, comment='시가')
+
+    # 키움 API 필드명과 일치하도록 수정
+    start_price = Column(Integer, comment='시가')  # open_price → start_price
     high_price = Column(Integer, comment='고가')
     low_price = Column(Integer, comment='저가')
-    close_price = Column(Integer, comment='현재가(종가)')
+    current_price = Column(Integer, comment='현재가')  # close_price → current_price
     volume = Column(BigInteger, comment='거래량')
     trading_value = Column(BigInteger, comment='거래대금')
+
+    # 추가 필드들
+    prev_day_diff = Column(Integer, comment='전일대비', default=0)
+    change_rate = Column(Integer, comment='등락율(소수점2자리*100)', default=0)
+
     created_at = Column(DateTime, default=datetime.now, comment='생성일시')
 
     # 인덱스 설정
@@ -60,7 +68,7 @@ class DailyPrice(Base):
     )
 
     def __repr__(self):
-        return f"<DailyPrice(stock_code='{self.stock_code}', date='{self.date}', close_price={self.close_price})>"
+        return f"<DailyPrice(stock_code='{self.stock_code}', date='{self.date}', current_price={self.current_price})>"
 
 class TickData(Base):
     """틱 데이터 모델 (기존 opt10079 틱차트조회 데이터)"""
