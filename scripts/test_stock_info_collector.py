@@ -198,8 +198,8 @@ def test_batch_collection(session, stock_codes):
 
 
 def test_update_logic(session, stock_codes):
-    """업데이트 로직 테스트"""
-    print(f"🔄 일일 업데이트 로직 테스트")
+    """업데이트 로직 테스트 - 실시간 업데이트 모드"""
+    print(f"🔄 실시간 업데이트 로직 테스트")
     print("=" * 40)
 
     try:
@@ -213,30 +213,31 @@ def test_update_logic(session, stock_codes):
         print(f"🧪 테스트 종목: {test_code}")
 
         # 1차 수집 (강제)
-        print(f"📥 1차 수집 (강제 모드)...")
+        print(f"📥 1차 수집 (실시간 모드)...")
         collector.collect_and_update_stocks([test_code], test_mode=False, force_update=True)
 
-        # 업데이트 필요 여부 확인
+        # 업데이트 필요 여부 확인 (실시간 모드에서는 항상 True여야 함)
         print(f"🔍 업데이트 필요 여부 확인...")
         needs_update = collector.is_update_needed(test_code)
-        print(f"   오늘 수집 필요: {'예' if needs_update else '아니오'}")
+        print(f"   실시간 모드 수집 필요: {'예' if needs_update else '아니오'}")
 
-        # 2차 수집 (일반 모드 - 건너뛰어야 함)
-        print(f"📥 2차 수집 (일반 모드)...")
+        # 2차 수집 (일반 모드 - 실시간 모드에서는 업데이트되어야 함)
+        print(f"📥 2차 수집 (실시간 모드)...")
         results = collector.collect_and_update_stocks([test_code], test_mode=False, force_update=False)
 
-        if results['total_skipped'] > 0:
-            print(f"✅ 일일 체크 로직 정상 작동 (건너뛰기)")
+        # 실시간 모드에서는 항상 업데이트되어야 함
+        if results['total_updated'] > 0 or results['total_collected'] > 0:
+            print(f"✅ 실시간 업데이트 로직 정상 작동 (재수집 완료)")
             return True
-        elif results['total_updated'] > 0:
-            print(f"🔄 데이터 업데이트됨 (5일 이상 경과)")
-            return True
+        elif results['total_skipped'] > 0:
+            print(f"❌ 실시간 모드인데 건너뛰기 발생 - 로직 오류")
+            return False
         else:
             print(f"❌ 예상치 못한 결과")
             return False
 
     except Exception as e:
-        print(f"❌ 업데이트 로직 테스트 실패: {e}")
+        print(f"❌ 실시간 업데이트 로직 테스트 실패: {e}")
         return False
 
 

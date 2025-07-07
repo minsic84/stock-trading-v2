@@ -256,46 +256,22 @@ class DatabaseService:
             return False
 
     def is_stock_update_needed(self, stock_code: str, force_daily: bool = True) -> bool:
-        """주식 정보 업데이트 필요 여부 확인 (일일 업데이트 기준)"""
+        """주식 정보 업데이트 필요 여부 확인 (실시간 업데이트 모드 - 항상 업데이트)"""
         try:
-            with self.db_manager.get_session() as session:
-                stock = session.query(Stock).filter(Stock.code == stock_code).first()
-
-                if not stock:
-                    return True  # 데이터가 없으면 수집 필요
-
-                if not stock.last_updated:
-                    return True  # 업데이트 시간이 없으면 수집 필요
-
-                if force_daily:
-                    # 일일 업데이트: 오늘 날짜와 비교
-                    today = datetime.now().date()
-                    last_update_date = stock.last_updated.date()
-
-                    return last_update_date < today  # 오늘 업데이트되지 않았으면 수집 필요
-                else:
-                    # 기존 방식: 5일 기준 (필요시 사용)
-                    days_passed = (datetime.now() - stock.last_updated).days
-                    return days_passed >= 5
+            # 실시간 업데이트 모드: 항상 최신 데이터로 업데이트
+            logger.info(f"{stock_code}: 실시간 업데이트 모드 - 항상 수집 필요")
+            return True
 
         except Exception as e:
             logger.error(f"업데이트 필요 여부 확인 실패 {stock_code}: {e}")
-            return True  # 오류 시 수집 수행
+            return True  # 오류 시에도 수집 수행
 
     def is_today_data_collected(self, stock_code: str) -> bool:
-        """오늘 날짜의 데이터가 이미 수집되었는지 확인"""
+        """오늘 날짜의 데이터가 이미 수집되었는지 확인 (실시간 모드에서는 항상 False)"""
         try:
-            with self.db_manager.get_session() as session:
-                stock = session.query(Stock).filter(Stock.code == stock_code).first()
-
-                if not stock or not stock.last_updated:
-                    return False
-
-                # 오늘 날짜와 비교
-                today = datetime.now().date()
-                last_update_date = stock.last_updated.date()
-
-                return last_update_date >= today  # 오늘 이후 업데이트되었으면 True
+            # 실시간 업데이트 모드: 항상 수집 필요하다고 반환
+            logger.info(f"{stock_code}: 실시간 모드 - 재수집 허용")
+            return False
 
         except Exception as e:
             logger.error(f"오늘 데이터 확인 실패 {stock_code}: {e}")

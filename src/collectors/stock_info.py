@@ -176,9 +176,10 @@ class StockInfoCollector:
             logger.error(f"{stock_code} 비활성화 처리 실패: {e}")
 
     def is_update_needed(self, stock_code: str, force_daily: bool = True) -> bool:
-        """주식 정보 업데이트 필요 여부 확인 (일일 업데이트 기준)"""
+        """주식 정보 업데이트 필요 여부 확인 (실시간 업데이트 모드)"""
         try:
-            return self.db_service.is_stock_update_needed(stock_code, force_daily)
+            # 실시간 모드: 항상 업데이트 필요
+            return True
         except Exception as e:
             logger.error(f"업데이트 필요 여부 확인 실패 {stock_code}: {e}")
             return True  # 오류 시 수집 수행
