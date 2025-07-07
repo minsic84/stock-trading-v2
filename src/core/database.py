@@ -24,18 +24,49 @@ logger = logging.getLogger(__name__)
 # SQLAlchemy Base
 Base = declarative_base()
 
+
 class Stock(Base):
-    """주식 기본 정보 모델"""
+    """주식 기본 정보 모델 (OPT10001 데이터 포함)"""
     __tablename__ = 'stocks'
 
+    # 기본 식별 정보
     code = Column(VARCHAR(10), primary_key=True, comment='종목코드')
     name = Column(VARCHAR(100), nullable=False, comment='종목명')
     market = Column(VARCHAR(10), comment='시장구분(KOSPI/KOSDAQ)')
+
+    # OPT10001 주식기본정보 데이터
+    current_price = Column(Integer, comment='현재가')
+    prev_day_diff = Column(Integer, comment='전일대비')
+    change_rate = Column(Integer, comment='등락률(소수점2자리*100)')
+    volume = Column(BigInteger, comment='거래량')
+    open_price = Column(Integer, comment='시가')
+    high_price = Column(Integer, comment='고가')
+    low_price = Column(Integer, comment='저가')
+    upper_limit = Column(Integer, comment='상한가')
+    lower_limit = Column(Integer, comment='하한가')
+    market_cap = Column(BigInteger, comment='시가총액')
+    market_cap_size = Column(VARCHAR(20), comment='시가총액규모')
+    listed_shares = Column(BigInteger, comment='상장주수')
+    per_ratio = Column(Integer, comment='PER(소수점2자리*100)')
+    pbr_ratio = Column(Integer, comment='PBR(소수점2자리*100)')
+
+    # 메타 정보
+    data_source = Column(VARCHAR(20), default='OPT10001', comment='데이터 출처')
+    last_updated = Column(DateTime, comment='마지막 업데이트')
+    is_active = Column(Integer, default=1, comment='활성 여부(1:활성, 0:비활성)')
     created_at = Column(DateTime, default=datetime.now, comment='생성일시')
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, comment='수정일시')
 
+    # 인덱스 설정
+    __table_args__ = (
+        Index('idx_market', 'market'),
+        Index('idx_last_updated', 'last_updated'),
+        Index('idx_is_active', 'is_active'),
+        Index('idx_market_cap', 'market_cap'),
+    )
+
     def __repr__(self):
-        return f"<Stock(code='{self.code}', name='{self.name}', market='{self.market}')>"
+        return f"<Stock(code='{self.code}', name='{self.name}', market='{self.market}', current_price={self.current_price})>"
 
 
 class DailyPrice(Base):
@@ -47,10 +78,10 @@ class DailyPrice(Base):
     date = Column(VARCHAR(8), nullable=False, comment='일자(YYYYMMDD)')
 
     # 키움 API 필드명과 일치하도록 수정
-    start_price = Column(Integer, comment='시가')  # open_price → start_price
+    start_price = Column(Integer, comment='시가')
     high_price = Column(Integer, comment='고가')
     low_price = Column(Integer, comment='저가')
-    current_price = Column(Integer, comment='현재가')  # close_price → current_price
+    current_price = Column(Integer, comment='현재가')
     volume = Column(BigInteger, comment='거래량')
     trading_value = Column(BigInteger, comment='거래대금')
 
@@ -70,29 +101,6 @@ class DailyPrice(Base):
     def __repr__(self):
         return f"<DailyPrice(stock_code='{self.stock_code}', date='{self.date}', current_price={self.current_price})>"
 
-class TickData(Base):
-    """틱 데이터 모델 (기존 opt10079 틱차트조회 데이터)"""
-    __tablename__ = 'tick_data'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)  # BIGINT → Integer로 변경
-    stock_code = Column(VARCHAR(10), nullable=False, comment='종목코드')
-    timestamp = Column(VARCHAR(6), nullable=False, comment='체결시간(HHMMSS)')
-    date = Column(VARCHAR(8), nullable=False, comment='일자(YYYYMMDD)')
-    price = Column(Integer, comment='현재가')
-    volume = Column(Integer, comment='거래량')
-    open_price = Column(Integer, comment='시가')
-    high_price = Column(Integer, comment='고가')
-    low_price = Column(Integer, comment='저가')
-    created_at = Column(DateTime, default=datetime.now, comment='생성일시')
-
-    # 인덱스 설정 (중복 방지)
-    __table_args__ = (
-        Index('idx_tick_stock_datetime', 'stock_code', 'date', 'timestamp'),
-        Index('idx_tick_date', 'date'),
-    )
-
-    def __repr__(self):
-        return f"<TickData(stock_code='{self.stock_code}', date='{self.date}', timestamp='{self.timestamp}', price={self.price})>"
 
 class DatabaseManager:
     """데이터베이스 연결 및 관리 클래스"""
@@ -112,7 +120,7 @@ class DatabaseManager:
             # SQLAlchemy 엔진 생성
             self.engine = create_engine(
                 database_url,
-                echo=self.config.debug,  # SQL 쿼리 로그 출력
+                echo=False,  # SQL 쿼리 로그 출력
                 pool_timeout=30,
                 pool_recycle=3600
             )
@@ -142,23 +150,6 @@ class DatabaseManager:
         if db_type == 'sqlite':
             db_path = os.getenv('SQLITE_DB_PATH', './data/stock_data.db')
             return f"sqlite:///{db_path}"
-
-        elif db_type == 'postgresql':
-            host = os.getenv('DB_HOST', 'localhost')
-            port = os.getenv('DB_PORT', '5432')
-            name = os.getenv('DB_NAME', 'stock_db')
-            user = os.getenv('DB_USER', '')
-            password = os.getenv('DB_PASSWORD', '')
-            return f"postgresql://{user}:{password}@{host}:{port}/{name}"
-
-        elif db_type == 'mysql':
-            host = os.getenv('DB_HOST', 'localhost')
-            port = os.getenv('DB_PORT', '3306')
-            name = os.getenv('DB_NAME', 'stock_db')
-            user = os.getenv('DB_USER', '')
-            password = os.getenv('DB_PASSWORD', '')
-            return f"mysql+pymysql://{user}:{password}@{host}:{port}/{name}"
-
         else:
             raise ValueError(f"Unsupported database type: {db_type}")
 
@@ -187,13 +178,10 @@ class DatabaseManager:
 
                 # 새로운 엔진 생성
                 self._setup_database()
-            else:
-                Base.metadata.drop_all(bind=self.engine)
 
             logger.warning("All tables dropped!")
         except Exception as e:
             logger.error(f"Failed to drop tables: {e}")
-            # 에러가 발생해도 계속 진행
 
     def get_session(self) -> Session:
         """새 데이터베이스 세션 반환"""
@@ -206,7 +194,6 @@ class DatabaseManager:
         try:
             from sqlalchemy import text
             with self.get_session() as session:
-                # 간단한 쿼리 실행 (SQLAlchemy 2.0 호환)
                 result = session.execute(text("SELECT 1"))
                 result.fetchone()
                 logger.info("Database connection test successful")
@@ -220,49 +207,123 @@ class DatabaseManager:
         try:
             with self.get_session() as session:
                 tables_info = {}
-
-                # 각 테이블의 레코드 수 조회
                 tables_info['stocks'] = session.query(Stock).count()
                 tables_info['daily_prices'] = session.query(DailyPrice).count()
-                tables_info['tick_data'] = session.query(TickData).count()
-                tables_info['real_time_data'] = session.query(RealTimeData).count()
-
                 return tables_info
         except Exception as e:
             logger.error(f"Failed to get table info: {e}")
             return {}
 
-# 데이터베이스 CRUD 작업을 위한 유틸리티 함수들
+
 class DatabaseService:
     """데이터베이스 서비스 클래스"""
 
     def __init__(self, db_manager: DatabaseManager):
         self.db_manager = db_manager
 
-    def add_stock(self, stock_code: str, stock_name: str, market: str = None) -> bool:
-        """주식 정보 추가"""
+    def add_or_update_stock_info(self, stock_code: str, stock_data: dict) -> bool:
+        """주식 기본정보 추가 또는 업데이트 (OPT10001 데이터)"""
         try:
             with self.db_manager.get_session() as session:
-                # 이미 존재하는지 확인
+                # 기존 데이터 확인
                 existing = session.query(Stock).filter(Stock.code == stock_code).first()
-                if existing:
-                    logger.info(f"Stock {stock_code} already exists")
-                    return True
 
-                # 새 주식 정보 추가
-                new_stock = Stock(
-                    code=stock_code,
-                    name=stock_name,
-                    market=market
-                )
-                session.add(new_stock)
+                if existing:
+                    # 기존 데이터 업데이트
+                    for key, value in stock_data.items():
+                        if hasattr(existing, key):
+                            setattr(existing, key, value)
+                    existing.last_updated = datetime.now()
+                    existing.updated_at = datetime.now()
+
+                    logger.info(f"주식정보 업데이트: {stock_code} - {stock_data.get('name', '')}")
+                else:
+                    # 새 데이터 추가
+                    new_stock = Stock(
+                        code=stock_code,
+                        last_updated=datetime.now(),
+                        **stock_data
+                    )
+                    session.add(new_stock)
+
+                    logger.info(f"새 주식정보 추가: {stock_code} - {stock_data.get('name', '')}")
+
                 session.commit()
-                logger.info(f"Added new stock: {stock_code} - {stock_name}")
                 return True
 
         except Exception as e:
-            logger.error(f"Failed to add stock {stock_code}: {e}")
+            logger.error(f"주식정보 저장 실패 {stock_code}: {e}")
             return False
+
+    def is_stock_update_needed(self, stock_code: str, force_daily: bool = True) -> bool:
+        """주식 정보 업데이트 필요 여부 확인 (일일 업데이트 기준)"""
+        try:
+            with self.db_manager.get_session() as session:
+                stock = session.query(Stock).filter(Stock.code == stock_code).first()
+
+                if not stock:
+                    return True  # 데이터가 없으면 수집 필요
+
+                if not stock.last_updated:
+                    return True  # 업데이트 시간이 없으면 수집 필요
+
+                if force_daily:
+                    # 일일 업데이트: 오늘 날짜와 비교
+                    today = datetime.now().date()
+                    last_update_date = stock.last_updated.date()
+
+                    return last_update_date < today  # 오늘 업데이트되지 않았으면 수집 필요
+                else:
+                    # 기존 방식: 5일 기준 (필요시 사용)
+                    days_passed = (datetime.now() - stock.last_updated).days
+                    return days_passed >= 5
+
+        except Exception as e:
+            logger.error(f"업데이트 필요 여부 확인 실패 {stock_code}: {e}")
+            return True  # 오류 시 수집 수행
+
+    def is_today_data_collected(self, stock_code: str) -> bool:
+        """오늘 날짜의 데이터가 이미 수집되었는지 확인"""
+        try:
+            with self.db_manager.get_session() as session:
+                stock = session.query(Stock).filter(Stock.code == stock_code).first()
+
+                if not stock or not stock.last_updated:
+                    return False
+
+                # 오늘 날짜와 비교
+                today = datetime.now().date()
+                last_update_date = stock.last_updated.date()
+
+                return last_update_date >= today  # 오늘 이후 업데이트되었으면 True
+
+        except Exception as e:
+            logger.error(f"오늘 데이터 확인 실패 {stock_code}: {e}")
+            return False
+
+    def get_stock_info(self, stock_code: str) -> dict:
+        """주식 기본정보 조회"""
+        try:
+            with self.db_manager.get_session() as session:
+                stock = session.query(Stock).filter(Stock.code == stock_code).first()
+
+                if stock:
+                    return {
+                        'code': stock.code,
+                        'name': stock.name,
+                        'market': stock.market,
+                        'current_price': stock.current_price,
+                        'change_rate': stock.change_rate,
+                        'volume': stock.volume,
+                        'market_cap': stock.market_cap,
+                        'last_updated': stock.last_updated
+                    }
+                else:
+                    return {}
+
+        except Exception as e:
+            logger.error(f"주식정보 조회 실패 {stock_code}: {e}")
+            return {}
 
     def add_daily_price(self, stock_code: str, date: str,
                        current_price: int, volume: int, trading_value: int,
@@ -314,70 +375,6 @@ class DatabaseService:
             logger.error(f"Failed to add daily price for {stock_code} on {date}: {e}")
             return False
 
-    def add_tick_data(self, stock_code: str, date: str, time: str,
-                     current_price: int, volume: int,
-                     start_price: int = None, high_price: int = None, low_price: int = None,
-                     prev_day_diff: int = None, change_rate: float = None) -> bool:
-        """틱 데이터 추가 (키움 API 호환)"""
-        try:
-            with self.db_manager.get_session() as session:
-                # 등락율을 정수로 변환
-                change_rate_int = int(change_rate * 100) if change_rate is not None else None
-
-                new_tick = TickData(
-                    stock_code=stock_code,
-                    date=date,
-                    time=time,
-                    current_price=current_price,
-                    volume=volume,
-                    start_price=start_price,
-                    high_price=high_price,
-                    low_price=low_price,
-                    prev_day_diff=prev_day_diff,
-                    change_rate=change_rate_int
-                )
-                session.add(new_tick)
-                session.commit()
-                return True
-
-        except Exception as e:
-            logger.error(f"Failed to add tick data for {stock_code}: {e}")
-            return False
-
-    def add_real_time_data(self, stock_code: str, date: str, time: str,
-                          current_price: int, prev_day_diff: int, change_rate: float,
-                          best_ask_price: int, best_bid_price: int, volume: int,
-                          cumulative_volume: int, cumulative_value: int = None,
-                          start_price: int = None, high_price: int = None, low_price: int = None) -> bool:
-        """실시간 데이터 추가"""
-        try:
-            with self.db_manager.get_session() as session:
-                change_rate_int = int(change_rate * 100) if change_rate is not None else None
-
-                new_real = RealTimeData(
-                    stock_code=stock_code,
-                    date=date,
-                    time=time,
-                    current_price=current_price,
-                    prev_day_diff=prev_day_diff,
-                    change_rate=change_rate_int,
-                    best_ask_price=best_ask_price,
-                    best_bid_price=best_bid_price,
-                    volume=volume,
-                    cumulative_volume=cumulative_volume,
-                    cumulative_value=cumulative_value,
-                    start_price=start_price,
-                    high_price=high_price,
-                    low_price=low_price
-                )
-                session.add(new_real)
-                session.commit()
-                return True
-
-        except Exception as e:
-            logger.error(f"Failed to add real-time data for {stock_code}: {e}")
-            return False
-
     def get_latest_date(self, stock_code: str, data_type: str = 'daily') -> Optional[str]:
         """종목의 최신 데이터 날짜 조회"""
         try:
@@ -386,10 +383,6 @@ class DatabaseService:
                     result = session.query(DailyPrice.date).filter(
                         DailyPrice.stock_code == stock_code
                     ).order_by(DailyPrice.date.desc()).first()
-                elif data_type == 'tick':
-                    result = session.query(TickData.date).filter(
-                        TickData.stock_code == stock_code
-                    ).order_by(TickData.date.desc()).first()
                 else:
                     return None
 
@@ -398,6 +391,7 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Failed to get latest date for {stock_code}: {e}")
             return None
+
 
 # 싱글톤 패턴으로 데이터베이스 매니저 인스턴스 생성
 _db_manager: Optional[DatabaseManager] = None

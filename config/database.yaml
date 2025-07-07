@@ -1,68 +1,61 @@
 # ===========================================
-# Database Configuration
+# Database Configuration (SQLite Only)
 # ===========================================
 
-# 현재 사용할 데이터베이스 (development, production, test)
-active_profile: development
-
-# 개발환경 설정
+# 개발환경 설정 (SQLite)
 development:
-  type: sqlite  # sqlite, mysql, postgresql
-  name: stock_data_dev.db
-  path: ./data/
-  echo: true  # SQL 쿼리 로그 출력
-  pool_size: 5
-  max_overflow: 10
-
-# 운영환경 설정 (PostgreSQL)
-production:
-  type: postgresql
-  host: localhost
-  port: 5432
-  name: stock_trading_db
-  echo: false
-  pool_size: 20
-  max_overflow: 30
-  pool_timeout: 30
-  pool_recycle: 3600
-  # 사용자 정보는 .env 파일에서 관리
-  # DB_USER, DB_PASSWORD 환경변수 사용
-
-# 테스트환경 설정
-test:
   type: sqlite
-  name: ":memory:"  # 메모리 DB
-  echo: false
+  name: stock_data.db
+  path: ./data/
+  echo: false  # SQL 쿼리 로그 출력
 
-# PostgreSQL 설정 (선택사항)
-postgresql_option:
-  type: postgresql
-  host: localhost
-  port: 5432
-  name: stock_trading_db
-  echo: false
-  pool_size: 15
-  max_overflow: 25
-
-# 데이터베이스 테이블 설정 (Phase 1: 일봉/틱데이터만)
+# 데이터베이스 테이블 설정
 tables:
   # 주식 기본 정보
+  # 주식 기본 정보 (OPT10001 데이터 포함)
   stocks:
     table_name: stocks
     columns:
+      # 기본 식별 정보
       - { name: code, type: VARCHAR(10), primary_key: true }
       - { name: name, type: VARCHAR(100), nullable: false }
       - { name: market, type: VARCHAR(10) }  # KOSPI, KOSDAQ
+
+      # OPT10001 주식기본정보 데이터
+      - { name: current_price, type: INTEGER }      # 현재가
+      - { name: prev_day_diff, type: INTEGER }      # 전일대비
+      - { name: change_rate, type: FLOAT }          # 등락률
+      - { name: volume, type: BIGINT }              # 거래량
+      - { name: open_price, type: INTEGER }         # 시가
+      - { name: high_price, type: INTEGER }         # 고가
+      - { name: low_price, type: INTEGER }          # 저가
+      - { name: upper_limit, type: INTEGER }        # 상한가
+      - { name: lower_limit, type: INTEGER }        # 하한가
+      - { name: market_cap, type: BIGINT }          # 시가총액
+      - { name: market_cap_size, type: VARCHAR(20) } # 시가총액규모
+      - { name: listed_shares, type: BIGINT }       # 상장주수
+      - { name: per_ratio, type: FLOAT }            # PER
+      - { name: pbr_ratio, type: FLOAT }            # PBR
+
+      # 메타 정보
+      - { name: data_source, type: VARCHAR(20), default: 'OPT10001' }  # 데이터 출처
+      - { name: last_updated, type: TIMESTAMP }     # 마지막 업데이트 (5일 체크용)
+      - { name: is_active, type: BOOLEAN, default: true }  # 활성 여부
       - { name: created_at, type: TIMESTAMP, default: CURRENT_TIMESTAMP }
       - { name: updated_at, type: TIMESTAMP, default: CURRENT_TIMESTAMP }
+    indexes:
+      - { name: idx_market, columns: [ market ] }
+      - { name: idx_last_updated, columns: [ last_updated ] }
+      - { name: idx_is_active, columns: [ is_active ] }
+      - { name: idx_market_cap, columns: [ market_cap ] }
 
-  # 일봉 데이터 (기존 opt10081 일봉차트조회 데이터)
+  # 일봉 데이터 (opt10081 일봉차트조회)
   daily_prices:
     table_name: daily_prices
     columns:
       - { name: id, type: INTEGER, primary_key: true, auto_increment: true }
       - { name: stock_code, type: VARCHAR(10), nullable: false }
-      - { name: date, type: VARCHAR(8), nullable: false }  # YYYYMMDD 형식 (기존 코드와 호환)
+      - { name: date, type: VARCHAR(8), nullable: false }  # YYYYMMDD
       - { name: open_price, type: INTEGER }     # 시가
       - { name: high_price, type: INTEGER }     # 고가
       - { name: low_price, type: INTEGER }      # 저가
@@ -73,41 +66,3 @@ tables:
     indexes:
       - { name: idx_stock_date, columns: [stock_code, date], unique: true }
       - { name: idx_date, columns: [date] }
-
-  # 틱 데이터 (기존 opt10079 틱차트조회 데이터)
-  tick_data:
-    table_name: tick_data
-    columns:
-      - { name: id, type: BIGINT, primary_key: true, auto_increment: true }
-      - { name: stock_code, type: VARCHAR(10), nullable: false }
-      - { name: timestamp, type: VARCHAR(6), nullable: false }  # HHMMSS 형식 (기존 체결시간과 호환)
-      - { name: date, type: VARCHAR(8), nullable: false }       # YYYYMMDD 형식
-      - { name: price, type: INTEGER }          # 현재가
-      - { name: volume, type: INTEGER }         # 거래량
-      - { name: open_price, type: INTEGER }     # 시가
-      - { name: high_price, type: INTEGER }     # 고가
-      - { name: low_price, type: INTEGER }      # 저가
-      - { name: created_at, type: TIMESTAMP, default: CURRENT_TIMESTAMP }
-    indexes:
-      - { name: idx_stock_datetime, columns: [stock_code, date, timestamp] }
-      - { name: idx_date, columns: [date] }
-
-# 데이터베이스 마이그레이션 설정
-migrations:
-  directory: ./migrations
-  table_name: migration_history
-  auto_upgrade: true
-
-# 연결 설정
-connection:
-  retry_attempts: 3
-  retry_delay: 1  # seconds
-  timeout: 30
-  test_connection: true
-
-# 백업 설정
-backup:
-  enabled: true
-  directory: ./backups
-  schedule: "0 2 * * *"  # 매일 새벽 2시
-  retention_days: 30
