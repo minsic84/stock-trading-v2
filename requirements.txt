@@ -28,3 +28,6 @@ requests>=2.31.0
 
 # Development and testing
 pytest>=7.4.0
+
+# Console Dashboard
+rich>=13.0.0

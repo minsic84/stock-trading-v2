@@ -1,22 +1,28 @@
 """
 Database connection and ORM models for Stock Trading System
 """
+from sqlalchemy import (
+    create_engine, Column, Integer, String, BigInteger,
+    DateTime, VARCHAR, Index, UniqueConstraint, func, String
+)
+
 import os
 import sqlite3
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
 import logging
 
-from sqlalchemy import (
-    create_engine, Column, Integer, String, BigInteger,
-    DateTime, VARCHAR, Index, UniqueConstraint
-)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.exc import SQLAlchemyError
 
 from .config import Config
+
+from sqlalchemy import (
+    create_engine, Column, Integer, String, BigInteger,
+    DateTime, VARCHAR, Index, UniqueConstraint, func  # func 추가
+)
 
 # 로거 설정
 logger = logging.getLogger(__name__)
@@ -101,6 +107,30 @@ class DailyPrice(Base):
     def __repr__(self):
         return f"<DailyPrice(stock_code='{self.stock_code}', date='{self.date}', current_price={self.current_price})>"
 
+class CollectionProgress(Base):
+    """전체 수집 진행상황 추적 모델"""
+    __tablename__ = 'collection_progress'
+
+    stock_code = Column(VARCHAR(10), primary_key=True, comment='종목코드')
+    stock_name = Column(VARCHAR(100), comment='종목명')
+    status = Column(VARCHAR(20), default='pending', comment='상태')  # pending, processing, completed, failed, skipped
+    attempt_count = Column(Integer, default=0, comment='시도 횟수')
+    last_attempt_time = Column(DateTime, comment='마지막 시도 시간')
+    success_time = Column(DateTime, comment='성공 시간')
+    error_message = Column(String(500), comment='오류 메시지')
+    data_count = Column(Integer, default=0, comment='수집된 데이터 개수')
+    created_at = Column(DateTime, default=datetime.now, comment='생성일시')
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, comment='수정일시')
+
+    # 인덱스 설정
+    __table_args__ = (
+        Index('idx_status', 'status'),
+        Index('idx_attempt_count', 'attempt_count'),
+        Index('idx_last_attempt_time', 'last_attempt_time'),
+    )
+
+    def __repr__(self):
+        return f"<CollectionProgress(stock_code='{self.stock_code}', status='{self.status}', attempt_count={self.attempt_count})>"
 
 class DatabaseManager:
     """데이터베이스 연결 및 관리 클래스"""
@@ -368,6 +398,157 @@ class DatabaseService:
             logger.error(f"Failed to get latest date for {stock_code}: {e}")
             return None
 
+    def update_collection_progress(self, stock_code: str, status: str, **kwargs) -> bool:
+        """수집 진행상황 업데이트"""
+        try:
+            with self.db_manager.get_session() as session:
+                # 기존 레코드 확인
+                progress = session.query(CollectionProgress).filter(
+                    CollectionProgress.stock_code == stock_code
+                ).first()
+
+                if progress:
+                    # 기존 레코드 업데이트
+                    progress.status = status
+                    progress.last_attempt_time = datetime.now()
+                    progress.updated_at = datetime.now()
+
+                    # 추가 필드 업데이트
+                    if status == 'processing':
+                        progress.attempt_count += 1
+                    elif status == 'completed':
+                        progress.success_time = datetime.now()
+                        progress.data_count = kwargs.get('data_count', 0)
+                    elif status == 'failed':
+                        progress.error_message = kwargs.get('error_message', '')
+
+                    if 'stock_name' in kwargs:
+                        progress.stock_name = kwargs['stock_name']
+
+                else:
+                    # 새 레코드 생성
+                    progress = CollectionProgress(
+                        stock_code=stock_code,
+                        stock_name=kwargs.get('stock_name', ''),
+                        status=status,
+                        attempt_count=1 if status == 'processing' else 0,
+                        last_attempt_time=datetime.now(),
+                        error_message=kwargs.get('error_message', '') if status == 'failed' else None,
+                        data_count=kwargs.get('data_count', 0) if status == 'completed' else 0
+                    )
+                    session.add(progress)
+
+                session.commit()
+                return True
+
+        except Exception as e:
+            logger.error(f"진행상황 업데이트 실패 {stock_code}: {e}")
+            return False
+
+    def get_collection_status_summary(self) -> Dict[str, Any]:
+        """전체 수집 현황 요약"""
+        try:
+            with self.db_manager.get_session() as session:
+                # 상태별 통계
+                status_counts = session.query(
+                    CollectionProgress.status,
+                    func.count(CollectionProgress.stock_code).label('count')
+                ).group_by(CollectionProgress.status).all()
+
+                # 전체 통계
+                total_count = session.query(CollectionProgress).count()
+                completed_count = session.query(CollectionProgress).filter(
+                    CollectionProgress.status == 'completed'
+                ).count()
+
+                # 성공률 계산
+                success_rate = (completed_count / total_count * 100) if total_count > 0 else 0
+
+                # 최근 활동
+                latest_activity = session.query(CollectionProgress).order_by(
+                    CollectionProgress.last_attempt_time.desc()
+                ).first()
+
+                return {
+                    'total_stocks': total_count,
+                    'completed': completed_count,
+                    'success_rate': round(success_rate, 2),
+                    'status_breakdown': {status: count for status, count in status_counts},
+                    'latest_activity': {
+                        'stock_code': latest_activity.stock_code if latest_activity else None,
+                        'stock_name': latest_activity.stock_name if latest_activity else None,
+                        'status': latest_activity.status if latest_activity else None,
+                        'time': latest_activity.last_attempt_time if latest_activity else None
+                    }
+                }
+
+        except Exception as e:
+            logger.error(f"수집 현황 조회 실패: {e}")
+            return {}
+
+    def get_failed_stocks(self, max_attempts: int = 3) -> List[Dict[str, Any]]:
+        """실패한 종목 목록 반환 (재시도 대상)"""
+        try:
+            with self.db_manager.get_session() as session:
+                failed_stocks = session.query(CollectionProgress).filter(
+                    CollectionProgress.status == 'failed',
+                    CollectionProgress.attempt_count < max_attempts
+                ).all()
+
+                return [
+                    {
+                        'stock_code': stock.stock_code,
+                        'stock_name': stock.stock_name,
+                        'attempt_count': stock.attempt_count,
+                        'error_message': stock.error_message
+                    }
+                    for stock in failed_stocks
+                ]
+
+        except Exception as e:
+            logger.error(f"실패 종목 조회 실패: {e}")
+            return []
+
+    def get_pending_stocks(self) -> List[str]:
+        """아직 처리되지 않은 종목 목록 반환"""
+        try:
+            with self.db_manager.get_session() as session:
+                pending_stocks = session.query(CollectionProgress.stock_code).filter(
+                    CollectionProgress.status.in_(['pending', 'failed'])
+                ).all()
+
+                return [stock[0] for stock in pending_stocks]
+
+        except Exception as e:
+            logger.error(f"대기 종목 조회 실패: {e}")
+            return []
+
+    def initialize_collection_progress(self, stock_codes_with_names: List[Tuple[str, str]]) -> bool:
+        """수집 진행상황 테이블 초기화"""
+        try:
+            with self.db_manager.get_session() as session:
+                # 기존 데이터 삭제
+                session.query(CollectionProgress).delete()
+
+                # 새 데이터 추가
+                progress_records = [
+                    CollectionProgress(
+                        stock_code=code,
+                        stock_name=name,
+                        status='pending'
+                    )
+                    for code, name in stock_codes_with_names
+                ]
+
+                session.add_all(progress_records)
+                session.commit()
+
+                logger.info(f"수집 진행상황 초기화 완료: {len(progress_records)}개 종목")
+                return True
+
+        except Exception as e:
+            logger.error(f"수집 진행상황 초기화 실패: {e}")
+            return False
 
 # 싱글톤 패턴으로 데이터베이스 매니저 인스턴스 생성
 _db_manager: Optional[DatabaseManager] = None
