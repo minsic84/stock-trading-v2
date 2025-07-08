@@ -214,7 +214,7 @@ def test_update_logic(session, stock_codes):
 
         # 1차 수집 (강제)
         print(f"📥 1차 수집 (실시간 모드)...")
-        collector.collect_and_update_stocks([test_code], test_mode=False, force_update=True)
+        collector.collect_and_update_stocks([test_code], test_mode=False, always_update=True)
 
         # 업데이트 필요 여부 확인 (실시간 모드에서는 항상 True여야 함)
         print(f"🔍 업데이트 필요 여부 확인...")
@@ -223,7 +223,7 @@ def test_update_logic(session, stock_codes):
 
         # 2차 수집 (일반 모드 - 실시간 모드에서는 업데이트되어야 함)
         print(f"📥 2차 수집 (실시간 모드)...")
-        results = collector.collect_and_update_stocks([test_code], test_mode=False, force_update=False)
+        results = collector.collect_and_update_stocks([test_code], test_mode=False, always_update=True)
 
         # 실시간 모드에서는 항상 업데이트되어야 함
         if results['total_updated'] > 0 or results['total_collected'] > 0:
