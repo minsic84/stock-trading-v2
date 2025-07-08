@@ -55,7 +55,7 @@ class DataConverter:
         logger.info("데이터 변환기 초기화 완료")
 
     def create_daily_table_for_stock(self, stock_code: str) -> bool:
-        """종목별 일봉 테이블 생성"""
+        """종목별 일봉 테이블 생성 (코드명만 사용)"""
         try:
             table_name = f"daily_prices_{stock_code}"
 
@@ -252,54 +252,6 @@ class DataConverter:
             logger.error(f"{stock_code}: 일봉 데이터 저장 실패 - {e}")
             return False
 
-    def test_converter(self, test_codes: list = None):
-        """데이터 변환기 테스트"""
-        if test_codes is None:
-            test_codes = ["005930"]  # 삼성전자로 테스트
-
-        print("🔄 데이터 변환기 테스트")
-        print("=" * 40)
-
-        for stock_code in test_codes:
-            print(f"\n📊 {stock_code} 변환 테스트 중...")
-
-            # 1. 테이블 생성 테스트
-            print(f"🏗️ 테이블 생성 중...")
-            table_success = self.create_daily_table_for_stock(stock_code)
-            print(f"   테이블 생성: {'✅ 성공' if table_success else '❌ 실패'}")
-
-            if not table_success:
-                continue
-
-            # 2. 데이터 변환 테스트
-            print(f"🔄 데이터 변환 중...")
-            convert_success = self.convert_stock_info_to_daily(stock_code)
-            print(f"   데이터 변환: {'✅ 성공' if convert_success else '❌ 실패'}")
-
-            # 3. 결과 확인
-            if convert_success:
-                self._verify_conversion_result(stock_code)
-
-        print(f"\n✅ 데이터 변환기 테스트 완료!")
-
-    def _verify_conversion_result(self, stock_code: str):
-        """변환 결과 검증"""
-        try:
-            table_name = f"daily_prices_{stock_code}"
-
-            with self.db_manager.get_session() as session:
-                result = session.execute(
-                    text(f"SELECT date, close_price, volume, data_source FROM {table_name} ORDER BY date DESC LIMIT 1")
-                ).fetchone()
-
-                if result:
-                    print(f"   📊 최신 데이터: {result[0]} - {result[1]:,}원 (출처: {result[3]})")
-                else:
-                    print(f"   ❌ 저장된 데이터 없음")
-
-        except Exception as e:
-            print(f"   ❌ 결과 확인 실패: {e}")
-
 
 def get_data_converter() -> DataConverter:
     """데이터 변환기 인스턴스 반환 (편의 함수)"""
@@ -315,9 +267,3 @@ def create_daily_table(stock_code: str) -> bool:
 def convert_today_data(stock_code: str) -> bool:
     """당일 데이터 변환 (편의 함수)"""
     return get_data_converter().convert_stock_info_to_daily(stock_code)
-
-
-# 직접 실행 시 테스트
-if __name__ == "__main__":
-    converter = DataConverter()
-    converter.test_converter(["005930", "000660"])

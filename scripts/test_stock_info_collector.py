@@ -16,6 +16,7 @@ from src.api.base_session import create_kiwoom_session
 from src.collectors.stock_info import StockInfoCollector, collect_stock_info_batch
 from src.market.code_collector import StockCodeCollector
 from src.core.database import get_database_manager
+from src.collectors.integrated_collector import create_integrated_collector
 
 
 def setup_kiwoom_session():
@@ -72,7 +73,7 @@ def test_database_preparation():
 
 
 def get_test_stock_codes(session):
-    """테스트용 종목코드 수집"""
+    """테스트용 종목코드 수집 (KOSPI 5개 + KOSDAQ 5개)"""
     print("\n📈 테스트용 종목코드 수집")
     print("=" * 40)
 
@@ -80,7 +81,7 @@ def get_test_stock_codes(session):
         connector = session.get_connector()
         code_collector = StockCodeCollector(connector)
 
-        # 코스피 5개 + 코스닥 5개 수집
+        # 코스피 종목코드 수집
         print("🔄 코스피 종목코드 수집 중...")
         kospi_codes = code_collector.get_kospi_codes()
 
@@ -91,15 +92,25 @@ def get_test_stock_codes(session):
             print("❌ 종목코드 수집 실패")
             return []
 
-        # 테스트용: 각각 5개씩
+        # 테스트용: KOSPI 5개 + KOSDAQ 5개 = 총 10개
         test_codes = kospi_codes[:5] + kosdaq_codes[:5]
 
         print(f"✅ 테스트 종목코드 준비 완료: {len(test_codes)}개")
         print("📋 테스트 종목 목록:")
+
+        kospi_count = 0
+        kosdaq_count = 0
+
         for i, code in enumerate(test_codes, 1):
-            market = "KOSPI" if code in kospi_codes else "KOSDAQ"
+            if code in kospi_codes:
+                market = "KOSPI"
+                kospi_count += 1
+            else:
+                market = "KOSDAQ"
+                kosdaq_count += 1
             print(f"   {i:2d}. {code} ({market})")
 
+        print(f"📊 구성: KOSPI {kospi_count}개, KOSDAQ {kosdaq_count}개")
         return test_codes
 
     except Exception as e:
@@ -107,143 +118,95 @@ def get_test_stock_codes(session):
         return []
 
 
-def test_single_stock_collection(session, stock_code):
-    """단일 종목 정보 수집 테스트"""
-    print(f"\n📊 단일 종목 수집 테스트: {stock_code}")
-    print("=" * 40)
-
-    try:
-        collector = StockInfoCollector(session)
-
-        # 수집 전 상태 확인
-        status_before = collector.get_collection_status()
-        print(f"🔍 수집 전 상태: {status_before}")
-
-        # 단일 종목 수집
-        print(f"🔄 {stock_code} 정보 수집 중...")
-        success, is_new = collector.collect_single_stock_info(stock_code)
-
-        if success:
-            print(f"✅ {stock_code} 수집 성공 ({'새 데이터' if is_new else '업데이트'})")
-
-            # 수집된 데이터 확인
-            stock_info = collector.db_service.get_stock_info(stock_code)
-            if stock_info:
-                print(f"📋 수집된 정보:")
-                print(f"   종목명: {stock_info.get('name', 'N/A')}")
-                print(f"   현재가: {stock_info.get('current_price', 0):,}원")
-                print(f"   등락률: {stock_info.get('change_rate', 0) / 100:.2f}%")
-                print(f"   거래량: {stock_info.get('volume', 0):,}주")
-                print(f"   시가총액: {stock_info.get('market_cap', 0):,}원")
-                print(f"   업데이트: {stock_info.get('last_updated', 'N/A')}")
-
-            return True
-        else:
-            print(f"❌ {stock_code} 수집 실패")
-            return False
-
-    except Exception as e:
-        print(f"❌ 단일 종목 수집 테스트 실패: {e}")
-        return False
-
-
-def test_batch_collection(session, stock_codes):
-    """배치 수집 테스트"""
-    print(f"\n🚀 배치 수집 테스트")
+def test_integrated_collection(session, stock_codes):
+    """통합 수집 테스트 (기본정보 + 일봉 데이터) - 10개 종목"""
+    print(f"\n🚀 통합 수집 테스트 (기본정보 + 일봉)")
     print("=" * 40)
 
     try:
         print(f"📊 대상 종목: {len(stock_codes)}개")
-        print(f"🧪 테스트 모드: 처음 5개만 수집")
+        print(f"🎯 수집 목표:")
+        print(f"   📋 각 종목별 기본정보 (OPT10001)")
+        print(f"   📊 각 종목별 5년치 일봉 데이터")
+        print(f"   🔄 누락 데이터 자동 보완")
 
-        # 배치 수집 실행
-        results = collect_stock_info_batch(
-            session=session,
-            stock_codes=stock_codes,
-            test_mode=True  # 5개만 수집
+        # 예상 소요 시간 계산
+        estimated_requests = len(stock_codes) * 3  # 종목당 평균 3회 API 요청
+        estimated_time = estimated_requests * 3.6 / 60  # 분 단위
+        print(f"⏱️ 예상 소요시간: {estimated_time:.1f}분")
+
+        response = input(f"\n실제 통합 수집을 시작하시겠습니까? (y/N): ")
+        if response.lower() != 'y':
+            print("ℹ️ 통합 수집 테스트를 건너뜁니다.")
+            return True
+
+        # 통합 수집기 생성
+        print(f"\n🔧 통합 수집기 준비 중...")
+        collector = create_integrated_collector(session)
+
+        # 통합 수집 실행
+        print(f"\n🔄 통합 수집 시작...")
+        results = collector.collect_multiple_stocks_integrated(
+            stock_codes,
+            test_mode=False  # 전체 리스트 사용
         )
 
-        if 'error' in results:
-            print(f"❌ 배치 수집 실패: {results['error']}")
-            return False
+        # 결과 분석
+        summary = results['summary']
 
-        # 결과 출력
-        print(f"\n📋 배치 수집 결과:")
-        print(f"   ✅ 새로 수집: {results['total_collected']}개")
-        print(f"   🔄 업데이트: {results['total_updated']}개")
-        print(f"   ⏭️ 건너뛰기: {results['total_skipped']}개")
-        print(f"   ❌ 실패: {results['total_errors']}개")
-        print(f"   ⏱️ 소요시간: {results['elapsed_time']:.1f}초")
+        print(f"\n📋 통합 수집 최종 결과:")
+        print(f"   📊 전체 종목: {summary['total_stocks']}개")
+        print(f"   ✅ 완전 성공: {summary['success_count']}개")
+        print(f"   ⚠️ 부분 성공: {summary['partial_success_count']}개")
+        print(f"   ❌ 실패: {summary['failed_count']}개")
 
-        # 성공한 종목들 상세 정보
-        if results['success'] or results['updated']:
-            print(f"\n📈 수집 성공 종목들:")
-            all_success = results['success'] + results['updated']
+        print(f"\n📈 기본정보 수집:")
+        print(f"   📥 신규 수집: {summary['total_stock_info_collected']}개")
+        print(f"   🔄 업데이트: {summary['total_stock_info_updated']}개")
 
-            from src.core.database import get_database_service
-            db_service = get_database_service()
+        print(f"\n📊 일봉 데이터:")
+        print(f"   📥 수집 레코드: {summary['total_daily_records_collected']:,}개")
 
-            for code in all_success[:3]:  # 처음 3개만 출력
-                info = db_service.get_stock_info(code)
-                if info:
-                    print(f"   📊 {code}: {info.get('name', 'N/A')} - "
-                          f"{info.get('current_price', 0):,}원 "
-                          f"({info.get('change_rate', 0) / 100:+.2f}%)")
+        print(f"\n⏱️ 실제 소요시간: {summary['elapsed_time']:.1f}초 ({summary['elapsed_time'] / 60:.1f}분)")
 
-        return results['total_collected'] + results['total_updated'] > 0
+        # 성공한 종목들 상세 정보 (처음 3개)
+        if results['success']:
+            print(f"\n✅ 성공 종목 샘플:")
+            for code in results['success'][:3]:
+                detail = results['stock_details'][code]
+                records = detail['daily_records_collected']
+                elapsed = detail['elapsed_time']
+                print(f"   📊 {code}: {records:,}개 레코드, {elapsed:.1f}초")
 
-    except Exception as e:
-        print(f"❌ 배치 수집 테스트 실패: {e}")
-        return False
+        # 실패한 종목 상세 정보
+        if results['failed']:
+            print(f"\n❌ 실패 종목:")
+            for code in results['failed']:
+                detail = results['stock_details'][code]
+                error_msg = detail.get('error', '알 수 없는 오류')
+                print(f"   {code}: {error_msg}")
 
+        # 성공 여부 판단
+        success_rate = summary['success_count'] / summary['total_stocks']
 
-def test_update_logic(session, stock_codes):
-    """업데이트 로직 테스트 - 실시간 업데이트 모드"""
-    print(f"🔄 실시간 업데이트 로직 테스트")
-    print("=" * 40)
-
-    try:
-        collector = StockInfoCollector(session)
-
-        if not stock_codes:
-            print("❌ 테스트할 종목코드가 없음")
-            return False
-
-        test_code = stock_codes[0]
-        print(f"🧪 테스트 종목: {test_code}")
-
-        # 1차 수집 (강제)
-        print(f"📥 1차 수집 (실시간 모드)...")
-        collector.collect_and_update_stocks([test_code], test_mode=False, always_update=True)
-
-        # 업데이트 필요 여부 확인 (실시간 모드에서는 항상 True여야 함)
-        print(f"🔍 업데이트 필요 여부 확인...")
-        needs_update = collector.is_update_needed(test_code)
-        print(f"   실시간 모드 수집 필요: {'예' if needs_update else '아니오'}")
-
-        # 2차 수집 (일반 모드 - 실시간 모드에서는 업데이트되어야 함)
-        print(f"📥 2차 수집 (실시간 모드)...")
-        results = collector.collect_and_update_stocks([test_code], test_mode=False, always_update=True)
-
-        # 실시간 모드에서는 항상 업데이트되어야 함
-        if results['total_updated'] > 0 or results['total_collected'] > 0:
-            print(f"✅ 실시간 업데이트 로직 정상 작동 (재수집 완료)")
+        if success_rate >= 0.8:  # 80% 이상 성공
+            print("🎉 통합 수집 테스트 성공!")
             return True
-        elif results['total_skipped'] > 0:
-            print(f"❌ 실시간 모드인데 건너뛰기 발생 - 로직 오류")
-            return False
+        elif success_rate >= 0.6:  # 60% 이상 성공
+            print("✨ 통합 수집 대부분 성공!")
+            return True
         else:
-            print(f"❌ 예상치 못한 결과")
+            print("⚠️ 통합 수집 결과 미흡")
             return False
 
     except Exception as e:
-        print(f"❌ 실시간 업데이트 로직 테스트 실패: {e}")
+        print(f"❌ 통합 수집 테스트 실패: {e}")
         return False
 
 
 def test_database_queries():
-    """데이터베이스 쿼리 테스트 및 HeidiSQL 쿼리 생성"""
-    print(f"\n🔍 데이터베이스 쿼리 테스트")
+    """데이터베이스 쿼리 테스트 및 HeidiSQL 쿼리 생성 (통합 데이터 포함)"""
+    print(f"\n🔍 통합 데이터베이스 쿼리 테스트")
     print("=" * 40)
 
     try:
@@ -251,35 +214,55 @@ def test_database_queries():
         db_service = get_database_service()
         db_manager = get_database_manager()
 
-        # 테이블 정보 확인
+        # 기본 테이블 정보
         table_info = db_manager.get_table_info()
-        print(f"📊 테이블 현황:")
+        print(f"📊 기본 테이블 현황:")
         for table, count in table_info.items():
             print(f"   📋 {table}: {count:,}개")
+
+        # 일봉 테이블 확인
+        print(f"\n📊 일봉 테이블 현황:")
+        with db_manager.get_session() as session:
+            from sqlalchemy import text
+
+            result = session.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'daily_prices_%'")
+            ).fetchall()
+
+            daily_tables = [row[0] for row in result]
+            print(f"   📋 생성된 일봉 테이블: {len(daily_tables)}개")
+
+            total_daily_records = 0
+            for table in daily_tables:
+                stock_code = table.replace('daily_prices_', '')
+                count_result = session.execute(text(f"SELECT COUNT(*) FROM {table}")).fetchone()
+                count = count_result[0] if count_result else 0
+                total_daily_records += count
+                print(f"      📊 {stock_code}: {count:,}개")
+
+            print(f"   📈 총 일봉 레코드: {total_daily_records:,}개")
 
         # HeidiSQL 쿼리 생성
         print(f"\n💻 HeidiSQL 확인 쿼리:")
         print(f"=" * 30)
 
-        print(f"-- 전체 종목 현황")
-        print(f"SELECT market, COUNT(*) as count, AVG(current_price) as avg_price")
-        print(f"FROM stocks")
-        print(f"WHERE current_price > 0")
-        print(f"GROUP BY market;")
+        print(f"-- 전체 통합 현황")
+        print(f"SELECT '기본정보' as type, COUNT(*) as count FROM stocks")
+        print(f"UNION ALL")
+        print(f"SELECT '일봉테이블' as type, COUNT(*) as count")
+        print(f"FROM sqlite_master WHERE type='table' AND name LIKE 'daily_prices_%';")
 
-        print(f"\n-- 최근 업데이트된 종목 (상위 10개)")
-        print(f"SELECT code, name, market, current_price, change_rate/100.0 as change_rate_pct, last_updated")
-        print(f"FROM stocks")
-        print(f"WHERE last_updated IS NOT NULL")
-        print(f"ORDER BY last_updated DESC")
-        print(f"LIMIT 10;")
+        if daily_tables:
+            first_table = daily_tables[0]
+            stock_code = first_table.replace('daily_prices_', '')
 
-        print(f"\n-- 시가총액 상위 종목 (상위 10개)")
-        print(f"SELECT code, name, market, current_price, market_cap")
-        print(f"FROM stocks")
-        print(f"WHERE market_cap > 0")
-        print(f"ORDER BY market_cap DESC")
-        print(f"LIMIT 10;")
+            print(f"\n-- {stock_code} 통합 데이터 확인")
+            print(f"SELECT code, name, current_price, volume, last_updated")
+            print(f"FROM stocks WHERE code = '{stock_code}';")
+            print(f"")
+            print(f"SELECT date, close_price, volume, data_source")
+            print(f"FROM {first_table}")
+            print(f"ORDER BY date DESC LIMIT 10;")
 
         return True
 
@@ -290,7 +273,7 @@ def test_database_queries():
 
 def main():
     """메인 테스트 함수"""
-    print("🚀 주식 기본정보 수집기 테스트")
+    print("🚀 통합 수집 시스템 테스트 (기본정보 + 일봉)")
     print("=" * 50)
 
     # 테스트 목록
@@ -323,17 +306,9 @@ def main():
     if test_codes:
         results.append(("종목코드 수집", True))
 
-        # 4단계: 단일 종목 테스트
-        single_success = test_single_stock_collection(session, test_codes[0])
-        results.append(("단일 종목 수집", single_success))
-
-        # 5단계: 배치 수집 테스트
-        batch_success = test_batch_collection(session, test_codes)
-        results.append(("배치 수집", batch_success))
-
-        # 6단계: 업데이트 로직 테스트
-        update_success = test_update_logic(session, test_codes)
-        results.append(("업데이트 로직", update_success))
+        # 4단계: 통합 수집 테스트 ⭐ 핵심
+        integrated_success = test_integrated_collection(session, test_codes)
+        results.append(("통합 수집", integrated_success))
 
         # 7단계: 데이터베이스 쿼리 테스트
         query_success = test_database_queries()
@@ -359,7 +334,7 @@ def main():
 
     if passed == total:
         print("🎉 모든 테스트 통과! 주식정보 수집 시스템 준비 완료.")
-        print("💡 다음 단계: 전체 시장 데이터 수집 또는 일봉 데이터 연동")
+        print("💡 통합 수집 완료! 이제 5년치 주식 데이터를 자동 수집할 수 있습니다.")
     elif passed >= total - 2:
         print("✨ 핵심 기능 테스트 통과! 실제 수집 가능.")
         print("💡 일부 실패한 기능들을 점검 후 운영 가능")

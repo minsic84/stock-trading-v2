@@ -10,6 +10,7 @@ import time
 from ..core.config import Config
 from ..core.database import DatabaseService, get_database_manager
 from ..api.connector import KiwoomAPIConnector, get_kiwoom_connector
+from src.utils.trading_date import get_market_today
 
 # 로거 설정
 logger = logging.getLogger(__name__)
@@ -78,9 +79,16 @@ class DailyPriceCollector:
 
             logger.info(f"일봉 데이터 수집 시작: {stock_code}")
 
+            # 종목별 테이블 생성 (필요시)
+            from src.utils.data_converter import get_data_converter
+            converter = get_data_converter()
+            if not converter.create_daily_table_for_stock(stock_code):
+                print(f"❌ {stock_code}: 테이블 생성 실패")
+                return False
+
             # 기존 데이터 확인 (업데이트 모드가 아닌 경우)
             if not update_existing:
-                latest_date = self.db_service.get_latest_date(stock_code, "daily")
+                latest_date = self._get_latest_date_from_table(stock_code)
                 if latest_date:
                     logger.info(f"{stock_code} 기존 데이터 존재 (최신: {latest_date})")
                     if not self._should_update(latest_date):
@@ -88,14 +96,17 @@ class DailyPriceCollector:
                         self.skipped_count += 1
                         return True
 
-            # 정확한 TR 데이터 요청 (opt10081 스펙에 맞춰 수정)
+            # 시장 기준 오늘 날짜를 기준일로 사용
+            market_today = get_market_today()
+            base_date = market_today.strftime('%Y%m%d')
+
             input_data = {
                 "종목코드": stock_code,
-                "기준일자": "20250701",  # 최신 데이터부터
-                "수정주가구분": "1"  # 1: 수정주가 적용
+                "기준일자": base_date,  # 오늘 날짜 또는 최근 거래일
+                "수정주가구분": "1"
             }
 
-            print(f"TR 입력 데이터: {input_data}")
+            print(f"🕐 기준일자: {base_date} (시장 기준 오늘)")
 
             collected_data = []
             prev_next = "0"
@@ -105,11 +116,12 @@ class DailyPriceCollector:
             while request_count < max_requests:
                 print(f"TR 요청 {request_count + 1}/{max_requests}")
 
-                # TR 요청
+                # TR 요청 (screen_no 추가)
                 response = self.kiwoom.request_tr_data(
                     rq_name=self.RQ_NAME,
                     tr_code=self.TR_CODE,
                     input_data=input_data,
+                    screen_no="9002",  # 추가
                     prev_next=prev_next
                 )
 
@@ -142,9 +154,9 @@ class DailyPriceCollector:
                 request_count += 1
                 time.sleep(self.config.api_request_delay_ms / 1000)
 
-            # 데이터베이스 저장
+            # 종목별 테이블에 데이터 저장
             if collected_data:
-                saved_count = self._save_daily_data(stock_code, collected_data)
+                saved_count = self._save_daily_data_to_table(stock_code, collected_data)
                 logger.info(f"{stock_code} 일봉 데이터 저장 완료: {saved_count}개")
                 self.collected_count += saved_count
                 return True
@@ -158,6 +170,84 @@ class DailyPriceCollector:
             logger.error(f"{stock_code} 일봉 데이터 수집 중 오류: {e}")
             self.error_count += 1
             return False
+
+    def _save_daily_data_to_table(self, stock_code: str, daily_data: List[Dict[str, Any]]) -> int:
+        """종목별 테이블에 일봉 데이터 저장"""
+        saved_count = 0
+        table_name = f"daily_prices_{stock_code}"
+
+        try:
+            from sqlalchemy import text
+
+            with self.db_service.db_manager.get_session() as session:
+                for data in daily_data:
+                    try:
+                        # INSERT OR REPLACE 쿼리
+                        insert_sql = f"""
+                        INSERT OR REPLACE INTO {table_name} 
+                        (date, open_price, high_price, low_price, close_price, 
+                         volume, trading_value, prev_day_diff, change_rate, data_source, created_at)
+                        VALUES 
+                        (:date, :open_price, :high_price, :low_price, :close_price,
+                         :volume, :trading_value, :prev_day_diff, :change_rate, :data_source, :created_at)
+                        """
+
+                        # 데이터 준비
+                        insert_data = {
+                            'date': data['date'],
+                            'open_price': data['start_price'],
+                            'high_price': data['high_price'],
+                            'low_price': data['low_price'],
+                            'close_price': data['current_price'],
+                            'volume': data['volume'],
+                            'trading_value': data['trading_value'],
+                            'prev_day_diff': data['prev_day_diff'],
+                            'change_rate': data['change_rate'],
+                            'data_source': 'OPT10081',
+                            'created_at': datetime.now()
+                        }
+
+                        session.execute(text(insert_sql), insert_data)
+                        saved_count += 1
+
+                    except Exception as e:
+                        logger.warning(f"{stock_code} 데이터 저장 실패: {data['date']} - {e}")
+                        continue
+
+                session.commit()
+
+        except Exception as e:
+            logger.error(f"{stock_code} 테이블 저장 중 오류: {e}")
+
+        return saved_count
+
+    def _get_latest_date_from_table(self, stock_code: str) -> Optional[str]:
+        """종목별 테이블에서 최신 날짜 조회"""
+        try:
+            table_name = f"daily_prices_{stock_code}"
+
+            with self.db_service.db_manager.get_session() as session:
+                from sqlalchemy import text
+
+                # 테이블 존재 확인
+                table_exists = session.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"),
+                    {"table_name": table_name}
+                ).fetchone()
+
+                if not table_exists:
+                    return None
+
+                # 최신 날짜 조회
+                result = session.execute(
+                    text(f"SELECT MAX(date) FROM {table_name}")
+                ).fetchone()
+
+                return result[0] if result and result[0] else None
+
+        except Exception as e:
+            logger.error(f"{stock_code} 최신 날짜 조회 실패: {e}")
+            return None
 
     def _parse_daily_data(self, response: Dict[str, Any], stock_code: str) -> List[Dict[str, Any]]:
         """키움 API 응답 데이터 파싱 - connector에서 이미 파싱된 데이터 사용"""

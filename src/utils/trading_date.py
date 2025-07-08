@@ -119,54 +119,6 @@ class TradingDateCalculator:
             logger.error(f"누락 거래일 계산 실패: {e}")
             return 0, []
 
-    def test_calculator(self):
-        """거래일 계산기 테스트"""
-        print("📅 거래일 계산기 테스트")
-        print("=" * 40)
-
-        # 1. 시장 기준 오늘 확인
-        market_today = self.get_market_today()
-        actual_today = datetime.now().date()
-        current_time = datetime.now().strftime('%H:%M')
-
-        print(f"🕐 현재 시간: {current_time}")
-        print(f"📅 실제 오늘: {actual_today}")
-        print(f"📊 시장 오늘: {market_today}")
-
-        if market_today != actual_today:
-            print("ℹ️  장 시작 전이므로 전날이 시장 기준 오늘입니다.")
-
-        # 2. 최근 거래일 확인
-        last_trading = self.get_last_trading_day()
-        print(f"📈 최근 거래일: {last_trading}")
-
-        # 3. 거래일 여부 확인
-        print(f"\n📋 최근 일주일 거래일 확인:")
-        for i in range(7):
-            check_date = market_today - timedelta(days=i)
-            is_trading = self.is_trading_day(check_date)
-            weekday = ['월', '화', '수', '목', '금', '토', '일'][check_date.weekday()]
-            status = "✅ 거래일" if is_trading else "❌ 휴장일"
-            print(f"   {check_date} ({weekday}): {status}")
-
-        # 4. 누락 계산 테스트
-        print(f"\n🔍 누락 거래일 계산 테스트:")
-        test_cases = [
-            "20250701",  # 1주일 전
-            "20250620",  # 2주일 전
-            "20250601",  # 한 달 전
-            "20241201",  # 반년 전
-        ]
-
-        for test_date in test_cases:
-            count, dates = self.count_missing_trading_days(test_date)
-            print(f"   {test_date} → {market_today}: {count}개 누락")
-            if count <= 10:  # 10개 이하면 상세 표시
-                print(f"      누락 날짜: {[d.strftime('%m-%d') for d in dates]}")
-
-        print(f"\n✅ 거래일 계산기 테스트 완료!")
-
-
 def get_trading_calculator() -> TradingDateCalculator:
     """거래일 계산기 인스턴스 반환 (편의 함수)"""
     return TradingDateCalculator()
@@ -187,8 +139,3 @@ def is_trading_day(target_date: date) -> bool:
     """거래일 여부 확인 (편의 함수)"""
     return get_trading_calculator().is_trading_day(target_date)
 
-
-# 직접 실행 시 테스트
-if __name__ == "__main__":
-    calculator = TradingDateCalculator()
-    calculator.test_calculator()

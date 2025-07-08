@@ -341,9 +341,3 @@ def collect_stocks_integrated(session: KiwoomSession, stock_codes: List[str],
     """통합 수집 실행 (편의 함수)"""
     collector = create_integrated_collector(session)
     return collector.collect_multiple_stocks_integrated(stock_codes, test_mode)
-
-
-# 직접 실행 시 테스트 (키움 세션 필요)
-if __name__ == "__main__":
-    print("⚠️ 통합 수집기는 키움 세션이 필요합니다.")
-    print("💡 scripts/test_integrated_collector.py를 사용하세요.")

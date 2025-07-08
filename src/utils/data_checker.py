@@ -93,12 +93,11 @@ class DataGapChecker:
             return self._create_error_status(stock_code, str(e))
 
     def _check_table_exists(self, stock_code: str) -> bool:
+        """종목별 일봉 테이블 존재 여부 확인"""
         try:
-            from sqlalchemy import text
             table_name = f"daily_prices_{stock_code}"
 
             with self.db_manager.get_session() as session:
-                # SQLite에서 테이블 존재 확인
                 result = session.execute(
                     text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"),
                     {"table_name": table_name}
@@ -113,12 +112,11 @@ class DataGapChecker:
             return False
 
     def _get_last_data_date(self, stock_code: str) -> Optional[str]:
+        """종목별 테이블에서 마지막 일봉 데이터 날짜 조회"""
         try:
-            from sqlalchemy import text
             table_name = f"daily_prices_{stock_code}"
 
             with self.db_manager.get_session() as session:
-                # 가장 최근 날짜 조회
                 result = session.execute(
                     text(f"SELECT MAX(date) FROM {table_name}")
                 ).fetchone()
@@ -195,42 +193,6 @@ class DataGapChecker:
 
         return results
 
-    def print_status_summary(self, status: Dict[str, Any]):
-        """데이터 상태 요약 출력 (디버깅용)"""
-        code = status['stock_code']
-        method = status['collection_method']
-        missing = status['missing_count']
-        requests = status['api_requests_needed']
-
-        if method == 'skip':
-            print(f"✅ {code}: 데이터 완전함")
-        elif method == 'convert':
-            print(f"🔄 {code}: 당일 데이터 변환 필요")
-        elif method == 'api':
-            print(f"📥 {code}: API 수집 필요 ({missing}개, {requests}회 요청)")
-        elif method == 'error':
-            print(f"❌ {code}: 오류 - {status.get('error', '알 수 없음')}")
-
-    def test_checker(self, test_codes: list = None):
-        """데이터 체커 테스트"""
-        if test_codes is None:
-            test_codes = ["005930", "000660", "035420"]  # 기본 테스트 종목
-
-        print("🔍 데이터 누락 체커 테스트")
-        print("=" * 50)
-
-        for code in test_codes:
-            print(f"\n📊 {code} 체크 중...")
-            status = self.check_daily_data_status(code)
-            self.print_status_summary(status)
-
-            # 상세 정보
-            if status['missing_dates']:
-                sample_dates = status['missing_dates'][:5]
-                print(f"   누락 날짜 샘플: {sample_dates}")
-
-        print(f"\n✅ 데이터 체커 테스트 완료!")
-
 
 def get_data_checker() -> DataGapChecker:
     """데이터 체커 인스턴스 반환 (편의 함수)"""
@@ -246,11 +208,3 @@ def check_stock_data_status(stock_code: str) -> Dict[str, Any]:
 def check_multiple_stocks_data_status(stock_codes: list) -> Dict[str, Dict[str, Any]]:
     """다중 종목 데이터 상태 체크 (편의 함수)"""
     return get_data_checker().check_multiple_stocks_status(stock_codes)
-
-
-# 직접 실행 시 테스트
-if __name__ == "__main__":
-    # 기존 수집된 종목들로 테스트
-    test_codes = ["005930", "000660", "035420", "005380", "068270"]
-    checker = DataGapChecker()
-    checker.test_checker(test_codes)
